@@ -1,7 +1,8 @@
 # AlohaMini — Full Workflow
 
 > **Prerequisites:** complete [install.md](install.md) first.  
-> **Hardware profiles:** see [profiles.md](profiles.md).
+> **Hardware profiles:** see [profiles.md](profiles.md).  
+> **Brand-new robot?** Follow the step-by-step [getting_started.md](getting_started.md) checklist instead — it covers assembly, wiring, device detection, and troubleshooting in order.
 
 Dual-arm setup — PC (client) + Raspberry Pi (host) on the same LAN.
 

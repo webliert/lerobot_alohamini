@@ -1,0 +1,66 @@
+# AlohaMini udev 规则（参考件）
+#
+# ⚠️ 实测结论：本文件**不需要安装**。
+#
+#    厂商已在 /etc/udev/rules.d/90-mydevice.rules 预装了全部所需规则（2026-10-28 核实）：
+#
+#      · 手臂：ATTRS{serial}=="58CD181359" → am_arm_follower_left
+#               ATTS{serial}=="5AE6081591" → am_arm_follower_right
+#               （另有 5AE6081513 / 5AE6082250 两条同名规则，属另一套板子）
+#
+#      · 相机：ATTRS{product}=="am_camera_head_*" + ATTR{index}=="0"
+#               → am_camera_head_top / am_camera_head_back / am_camera_head_front
+#               （另含 wrist_left / wrist_right 规则，但本机没接这两个设备，
+#                 所以不会生成符号链接 —— 这正是默认配置里 wrist_right 打不开的原因）
+#
+#    本文件仅作为「这些别名是怎么来的」的说明与备份。
+#
+# 查看厂商原始规则：
+#   cat /etc/udev/rules.d/90-mydevice.rules
+#
+# 需要复现这些别名时才安装：
+#   sudo cp 90-alohamini.rules /etc/udev/rules.d/90-alohamini.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# 验证：
+#   ls -l /dev/am_arm_* /dev/am_camera_*
+
+# ─────────────────────────────────────────────────────────────
+# 随动臂总线（Feetech USB 单串口控制器）
+#   序列号来自 /dev/serial/by-id/ 的 usb-1a86_USB_Single_Serial_<SN>-if00
+# ─────────────────────────────────────────────────────────────
+
+# 左总线：左臂(ID 1-6) + 底盘三轮(ID 8/9/10) + 升降轴(ID 11)
+SUBSYSTEM=="tty", ATTRS{serial}=="58CD181359", SYMLINK+="am_arm_follower_left"
+
+# 右总线：右臂(ID 1-6)
+SUBSYSTEM=="tty", ATTRS{serial}=="5AE6081591", SYMLINK+="am_arm_follower_right"
+
+# ─────────────────────────────────────────────────────────────
+# Leader 臂（在 PC 上执行，序列号待填）
+#   查序列号：udevadm info --attribute-walk --name=/dev/ttyACM0 \
+#                | awk -F'"' '/ATTRS{serial}/{print $2; exit}'
+# ─────────────────────────────────────────────────────────────
+# SUBSYSTEM=="tty", ATTRS{serial}=="<leader_left_serial>",  SYMLINK+="am_arm_leader_left"
+# SUBSYSTEM=="tty", ATTRS{serial}=="<leader_right_serial>", SYMLINK+="am_arm_leader_right"
+
+# ─────────────────────────────────────────────────────────────
+# 相机（USB UVC，每台暴露 2 个节点：采集 + 元数据）
+#
+# ⚠️ 必须用 ATTRS{product}，不能用 ATTRS{serial}：
+#    这三台相机的 ATTRS{serial} 是 USB 拓扑路径，不是芯片序列号，
+#    且 head_top 与 head_front 同为 "xhci-hcd.1" —— serial 无法区分。
+#    厂商在 USB product string 里写了唯一名字（am_camera_head_*），用它。
+#
+#   ATTR{index}=="0"（单数）匹配 v4l 节点自身的 index 属性：
+#     index0 = 采集节点（有图像）
+#     index1 = 元数据节点（无图像，不能用）
+#   这是区分两个节点最直接的方式，比过滤 ID_V4L_CAPABILITIES 更干净。
+#   （实测采集节点 ID_V4L_CAPABILITIES=":capture:"，元数据节点为 ":"）
+#
+#   当前采集节点：head_top=/dev/video0, head_back=/dev/video2, head_front=/dev/video4
+# ─────────────────────────────────────────────────────────────
+SUBSYSTEM=="video4linux", ATTRS{product}=="am_camera_head_top",   ATTR{index}=="0", SYMLINK+="am_camera_head_top"
+SUBSYSTEM=="video4linux", ATTRS{product}=="am_camera_head_back",  ATTR{index}=="0", SYMLINK+="am_camera_head_back"
+SUBSYSTEM=="video4linux", ATTRS{product}=="am_camera_head_front", ATTR{index}=="0", SYMLINK+="am_camera_head_front"
