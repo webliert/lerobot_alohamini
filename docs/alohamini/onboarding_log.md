@@ -3,7 +3,7 @@
 > **用途**：记录实体设备上手过程中的**实测结论**，供下次接手时直接续做，避免重复排查。
 > 配套手册：[getting_started.md](getting_started.md)（流程）· [profiles.md](profiles.md)（型号）· [commands.md](commands.md)（命令速查）
 >
-> 最后更新：**2026-10-27**
+> 最后更新：**2026-10-28**
 
 ---
 
@@ -11,11 +11,11 @@
 
 | 项 | 状态 |
 |---|---|
-| **当前阶段** | 第 3 步 · 设备名固定 + 相机视角确认（**进行中**） |
-| **下一步** | 执行 §5 的 3-B（拿相机序列号）和 3-C（抓 3 张图） |
+| **当前阶段** | 第 5 步 · **从臂标定**（相机这步已收口） |
+| **下一步** | §6 从臂标定 → 双臂断电重启 → 底盘/升降测试 → 启 Host |
 | 机器人型号 | ✅ **已确定：`alohamini1`** |
 | 手臂串口 | ✅ 已确认（含序列号映射） |
-| 相机 | ⚠️ 已枚举出 3 台，但**视角未确认**、**udev 别名未建** |
+| 相机 | ✅ **全部完成**：别名已建 · 配置已改并同步到 Pi · 三台视角已抓图确认无镜像/倒置 · 启用 `head_front`+`head_top`（MJPG） |
 | 从臂标定 | ⬜ 未开始 |
 | 底盘/升降测试 | ⬜ 未开始 |
 | Host 启动 | ⬜ 未开始 |
@@ -31,12 +31,13 @@
 |---|---|
 | 树莓派 | `pi5@raspberrypi`，主机名 `raspberrypi` |
 | **树莓派 IP** | **`10.168.1.110`**（`<Pi_IP>`） |
-| 树莓派仓库路径 | `~/lerobot_alohamini`（即 `/home/pi5/lerobot_alohamini`） |
-| 树莓派 Python 环境 | conda env `lerobot_alohamini`（已激活） |
+| 树莓派仓库路径 | **`/home/pi5/lxy_ws/lerobot_alohamini`**（2026-10-28 实测；此前记的 `~/lerobot_alohamini` 不准） |
+| 树莓派 Python 环境 | conda env `lerobot_alohamini`（已激活），**实际是 Python 3.10** |
 | 树莓派串口权限 | ✅ 可正常访问 `/dev/ttyACM*`（`dialout` 已生效） |
-| PC 终端环境 | WSL2，`/home/trolorm/lxy_ws/lerobot_alohamini` |
+| PC 终端环境（2026-10-28 起） | 原生 Linux `szxx`，仓库路径 `/home/szxx/lxy_ws/lerobot_alohamini`（此前是 WSL2 `/home/trolorm/...`） |
+| PC 网段 | `10.211.232.66/24`（路由器 `10.211.232.39`）→ **与树莓派不同网段** |
 | PC 角色 | Leader 臂 + 策略推理/训练（**Leader 臂尚未接入**） |
-| 网络 | 树莓派与 PC 需同局域网，**IP 待确认**（后续所有命令要用 `<Pi_IP>`） |
+| 网络 | ⚠️ 树莓派 `10.168.1.110` 在 `10.168.1.0/24`，**从当前 PC 不可达**（ping 100% 丢包、ssh 22 超时）→ 需把 PC 接到机器人局域网，或提供新的 `<Pi_IP>` |
 
 ---
 
@@ -182,7 +183,9 @@ usb-1a86_USB_Single_Serial_5AE6081591-if00
 - `/dev/am_camera_forward` —— 厂商规则里**没有**这一条 → 路径不存在
 - `/dev/am_camera_wrist_right` —— 规则存在但**设备没接** → 符号链接没生成
 
-→ **默认配置必然开不了相机**，Host 会在 `cam.connect()` 处抛异常。**配置必须改。**
+→ **旧默认配置必然开不了相机**，Host 会在 `cam.connect()` 处抛异常。
+→ 仓库侧已修（`cfd8feba`）：改为 `head_front` + `head_top`，并加 `fourcc="MJPG"`；`head_back` 保留为注释备用。
+→ **Pi 上的那份还是旧的** → 同步（§5-2）之前启动 Host 仍会失败。
 → 相机键名会进入数据集 schema（`observation.images.<key>`），一旦开始采集就固定。
 
 ### 4.5 建议：强制 MJPG
@@ -195,6 +198,21 @@ MJPG 约几百 KB/s。**配置里应加 `fourcc="MJPG"`**。
 
 ## 5. 下一步（续做从这里开始）
 
+### 5-0 仓库侧状态（2026-10-28 已完成的部分）
+
+分支 `feat/alohamini-onboarding`（已推送 `origin/feat/alohamini-onboarding`）：
+
+| 提交 | 内容 |
+|---|---|
+| `cfd8feba` | `config_alohamini.py` 相机改绑 `head_front` / `head_top` + `fourcc="MJPG"`，删掉未接的 `wrist_right` |
+| `2a1051b2` | 本手册 + 中文 README + udev 参考件 |
+
+**相机键名的影响面已核实**：`grep` 全仓库只有键盘映射用到字符串 `"forward"`（`config_alohamini.py:148` 速度键、`alohamini_client.py:567` 前进键），
+**没有任何代码硬编码相机键名**。图像由 Pi 上的 Host 按配置打开、经 ZMQ 传到 PC，
+PC 侧 `record_bi*.py` 不本地开相机 → **相机键名只需在 Pi 侧一致即可**，PC 侧会自动跟随。
+
+⚠️ 唯一约束：键名会写进数据集 schema（`observation.images.<key>`），**开始采集后就固定**，改键名 = 换一套 schema。
+
 ### 5-1 ~~装 udev 规则~~ → **不需要，已由厂商预装** ✅
 
 手臂和相机的别名**全部已存在且映射正确**，见 §4.1。
@@ -204,10 +222,27 @@ MJPG 约几百 KB/s。**配置里应加 `fourcc="MJPG"`**。
 
 ### 5-2 同步相机配置到树莓派 + 验证
 
-Pi 上那份 `src/lerobot/robots/alohamini/config_alohamini.py` 还是旧的，
-需要把仓库里的新版同步过去（PC 侧这份已是新的）。
+仓库里的 `config_alohamini.py` **已经是新的**（`cfd8feba`），Pi 上那份还是旧的，需要同步。二选一：
 
-同步后验证：
+**方式 A — 在 Pi 上 git 拉取（推荐）**
+
+```bash
+# <Pi>
+cd ~/lerobot_alohamini
+git fetch origin
+git checkout feat/alohamini-onboarding
+git pull
+```
+
+**方式 B — 只传这一个文件**
+
+```bash
+# <PC>
+scp src/lerobot/robots/alohamini/config_alohamini.py \
+    pi5@<Pi_IP>:~/lerobot_alohamini/src/lerobot/robots/alohamini/config_alohamini.py
+```
+
+同步后在 Pi 上验证（**用 Pi 的 conda 环境**：`conda activate lerobot_alohamini`）：
 
 ```bash
 python -c "
@@ -236,12 +271,14 @@ for name, cfg in alohamini_cameras_config().items():
 
 ### 5-3 抓 3 张图确认视角
 
+用**别名**抓（不要再用 `/dev/videoN`，插拔会移位）：
+
 ```bash
 mkdir -p /tmp/camcheck
-for p in video0 video2 video4; do
-  v4l2-ctl -d /dev/$p \
+for n in head_front head_top head_back; do
+  v4l2-ctl -d /dev/am_camera_$n \
     --set-fmt-video=width=640,height=480,pixelformat=MJPG \
-    --stream-mmap=3 --stream-count=1 --stream-to=/tmp/camcheck/$p.jpg 2>/dev/null
+    --stream-mmap=3 --stream-count=1 --stream-to=/tmp/camcheck/$n.jpg 2>/dev/null
 done
 ls -l /tmp/camcheck/
 ```
@@ -258,6 +295,12 @@ ls -l /tmp/camcheck/
 - 按实际视角定键名
 - **改完必须重启 Host 才生效**
 
+> ✅ **2026-10-28 收口**：三张图已抓取并人工确认（画面正常、无上下颠倒、无左右镜像）。
+> **键名沿用厂商别名**：`head_front` + `head_top`（`head_back` 保留注释，不启用）。
+> 理由：厂商 USB product string 已把三台相机命名成 `am_camera_head_{front,top,back}`，
+> 键名与硬件别名一一对应，换名只会徒增不一致；且键名会进数据集 schema，越早定越好。
+> 仓库侧改动已在 `cfd8feba` 提交，Pi 侧已 `git pull` 同步并验证出图。
+
 ---
 
 ## 6. 后续阶段命令（`alohamini1` 版，已填好）
@@ -273,11 +316,34 @@ python -m lerobot.robots.alohamini.alohamini_calibrate --robot_model alohamini1
 
 ### 底盘 / 升降单独测试（树莓派）
 
+> ⚠️ **必须先停掉 Host**（`Ctrl+C` 退出 `alohamini_host`）。
+> 原因：`wheels.py` / `axis.py` 自己 `FeetechMotorsBus(port=...)` 直接打开 `/dev/am_arm_follower_left`，
+> 而 Host 在 `connect()` 时也长期占用同一个端口 —— USB CDC 同一时刻只能被一个进程打开，
+> 第二个会报 `Device or resource busy`；即使能打开，两个进程也会同时写同一批电机
+> （Host 写 position、脚本写 velocity），动作互相打架、无法解释。
+> 标定脚本同理，所以顺序是：**标定 → 断电重启 → 底盘/升降测试 → 启 Host**。
+
 ```bash
 python examples/debug/wheels.py --port /dev/am_arm_follower_left
 python examples/debug/axis.py   --port /dev/am_arm_follower_left
 ```
 > ⚠️ `axis.py` 硬编码 `sts3215` + `RANGE_0_100`；`alohamini1` 的升降电机确实是 STS3215，但真实配置用的是 `DEGREES` 归一化 —— 该脚本测出来的数值**不要当作真值**，只用来确认「能升降、不顶死」。
+> 依赖 `pynput`（含在 `hardware` extra，Pi 上 `.[all]` 已装）；报 `No module named 'pynput'` 就 `pip install pynput`。
+
+> ### ⚠️ 无显示器（headless / SSH）下的键盘
+>
+> 2026-10-28 实测踩坑：`pynput` 在树莓派上**导入即失败**——
+> `ImportError: this platform is not supported: ('failed to acquire X connection: Bad display name ""')`，
+> 因为它要在 import 时绑定 X 显示，而 Pi 上没有 X server。
+>
+> **已修**：`examples/debug/wheels.py` 和 `axis.py` 改为
+> 「有显示 → `pynput`（按住即动、松开即停）；无显示 → 仓库自带的 `TerminalKeyListener`
+> 读控制终端（`lerobot.utils.keyboard_input`）」。
+> 终端模式只有 key-down 没有 key-release，所以语义变成
+> **按一下键开始动，停手约 0.4 s 后自动停，连按可保持运动**；`Q`/`ESC` 退出。
+>
+> ⚠️ `PYNPUT_BACKEND=uinput` 在 SSH 下**没用**：SSH 敲的键进的是远端 TTY，不经过内核 input 层，
+> uinput 后端只能看到**插在 Pi 上的物理键盘**。
 
 ### 启动 Host（树莓派，常开终端）
 
@@ -331,13 +397,19 @@ python examples/alohamini/record_bi_multirate.py \
 
 ## 7. 待办 / 风险备忘
 
-- [ ] 相机**元数据节点**（video1/3/5）的 `ID_V4L_CAPABILITIES` 未确认 —— 决定相机的 udev 过滤条件是否唯一
-- [ ] 相机 udev 别名未建（5-2）
-- [ ] 相机视角未确认（5-3）
-- [ ] `config_alohamini.py` 未改（5-4）
+- [ ] 相机**元数据节点**（video1/3/5）的 `ID_V4L_CAPABILITIES` 未确认 —— 当前靠 `ATTR{index}=="0"` 已能区分采集/元数据节点，**非阻塞**
+- [x] 相机 udev 别名 → 厂商已预装，不需要建（§5-1）
+- [x] 仓库 `config_alohamini.py` 已改（`cfd8feba`：`head_front` + `head_top` + MJPG）
+- [x] `config_alohamini.py` 已同步到 Pi 并验证出图（§5-2）
+- [x] 相机视角已确认（§5-3 → §5-4）：无镜像、无倒置，键名定稿 `head_front` + `head_top`
+- [ ] 从臂标定（§6）+ 双臂断电重启
+- [ ] 底盘 / 升降轴单独测试
+- [ ] Host 启动（50 Hz）
 - [ ] **PC 上 Leader 臂的型号/ID 未确认** —— 决定 `--teleop.id` 和 `--teleop.arm_profile`
-- [ ] PC 端 udev 规则（Leader 臂别名）未建
+- [ ] PC 端 udev 规则（Leader 臂别名）未建 —— 三个脚本端口硬编码 `/dev/am_arm_leader_{left,right}`
+- [ ] **PC ↔ Pi 网络不通**（当前 PC 在 `10.211.232.0/24`，Pi 在 `10.168.1.0/24`）→ 遥操/录制前必须解决
 - [ ] `alohamini_sim` 不可用（缺 URDF + LFS 未拉 + 43 处硬编码路径），与真机上手无关，但别指望仿真
+- ⚠️ **树莓派 conda env 是 Python 3.10，而 `pyproject.toml` 要求 `>=3.12`** —— 目前能跑，但装某些新依赖时可能解析失败；必要时重建 3.12 环境
 
 > ℹ️ **`feetech-servo-sdk` 的 import 名是 `scservo_sdk`**，不是 `feetech_servo_sdk`
 > （见 `src/lerobot/utils/import_utils.py:114`）。用 `python -c "import scservo_sdk"` 验证。

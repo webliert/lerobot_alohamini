@@ -168,6 +168,10 @@ export HF_USER=$(hf auth whoami | sed 's/^user=//')
 
 否则每次重插 USB 或重启，端口号都会变，配置文件得跟着改。
 
+> ℹ️ **本机（AlohaMini 1，厂商已预装规则）例外**：`/etc/udev/rules.d/90-mydevice.rules` 已生成
+> `/dev/am_arm_follower_{left,right}` 和 `/dev/am_camera_head_{top,back,front}`，**不需要再装规则**。
+> 实测结论与相机视角见 [onboarding_log.md](onboarding_log.md) §4。
+
 ```bash
 # 查序列号
 udevadm info --attribute-walk --name=/dev/ttyACM0 | awk -F'"' '/ATTRS{serial}/{print $2; exit}'
@@ -264,6 +268,10 @@ python examples/debug/wheels.py --port /dev/am_arm_follower_left
 
 按键：`W/S` 前进后退 · `A/D` 旋转 · `Q/E` 横移 · `X/ESC` 退出。
 
+> ℹ️ **无显示器（树莓派 / SSH）也能用**：检测不到 X 显示时脚本自动切到**终端键盘**模式——
+> **按一下键开始动**，停手后约 0.4 s 自动停；连按可保持运动。`Q` 或 `ESC` 退出。
+> 有显示器时仍走 `pynput`（按住即动，松开即停）。
+
 **通过标准**：三个轮子都转，方向正确（前进应该是前进，不是后退），旋转方向正常。
 
 ### 7.2 升降轴
@@ -271,6 +279,8 @@ python examples/debug/wheels.py --port /dev/am_arm_follower_left
 ```bash
 python examples/debug/axis.py --port /dev/am_arm_follower_left
 ```
+
+按键：`U` 上升 · `J` 下降 · `Q`/`ESC` 退出（无显示器时同样是「按一下动、0.4 s 后自动停」）。
 
 **通过标准**：轴平滑升降，到底/到顶时有保护（不会硬顶）。
 
