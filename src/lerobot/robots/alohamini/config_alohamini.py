@@ -21,30 +21,39 @@ from ..config import RobotConfig
 
 
 def alohamini_cameras_config() -> dict[str, CameraConfig]:
+    # 相机接在树莓派上，由 Host 打开；PC 侧只沿用这里的**键名**来对齐数据集 schema。
+    #
+    # 设备路径用 udev 的稳定别名（/etc/udev/rules.d/90-mydevice.rules 生成），
+    # 不依赖 /dev/videoN 的编号 —— 本机有 3 台真相机 + 18 个树莓派内置 ISP 伪节点，
+    # /dev/videoN 会随插拔平移。厂商规则用 ATTR{index}=="0" 区分采集节点与元数据节点。
+    #
+    # fourcc="MJPG"：实测默认会协商到 YUYV（未压缩，640x480@30 ≈ 18 MB/s/台），
+    # MJPG 只有几百 KB/s，能显著减轻树莓派的 USB 带宽负担。
     return {
-        "forward": OpenCVCameraConfig(
-            index_or_path="/dev/am_camera_forward",
+        "head_front": OpenCVCameraConfig(
+            index_or_path="/dev/am_camera_head_front",
             fps=30,
             width=640,
             height=480,
             rotation=Cv2Rotation.NO_ROTATION,
+            fourcc="MJPG",
         ),
-        # "backward": OpenCVCameraConfig(
-        #     index_or_path="/dev/am_camera_backward", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),
-        # "chest": OpenCVCameraConfig(
-        #     index_or_path="/dev/am_camera_chest", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),
-        # "wrist_left": OpenCVCameraConfig(
-        #     index_or_path="/dev/am_camera_wrist_left", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),
-        "wrist_right": OpenCVCameraConfig(
-            index_or_path="/dev/am_camera_wrist_right",
+        "head_top": OpenCVCameraConfig(
+            index_or_path="/dev/am_camera_head_top",
             fps=30,
             width=640,
             height=480,
             rotation=Cv2Rotation.NO_ROTATION,
+            fourcc="MJPG",
         ),
+        # "head_back": OpenCVCameraConfig(
+        #     index_or_path="/dev/am_camera_head_back",
+        #     fps=30,
+        #     width=640,
+        #     height=480,
+        #     rotation=Cv2Rotation.NO_ROTATION,
+        #     fourcc="MJPG",
+        # ),
     }
 
 
