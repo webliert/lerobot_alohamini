@@ -17,10 +17,15 @@ import argparse
 import time
 
 import numpy as np
-from pynput import keyboard
 
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
+from lerobot.utils.keyboard_input import TerminalKeyListener, pynput_can_capture
+
+try:
+    from pynput import keyboard
+except Exception:  # headless Linux has no X display for pynput to bind to
+    keyboard = None
 
 # ------------------------ Global constants (edit here) ------------------------ #
 DEFAULT_PORT: str = "/dev/ttyACM0"
@@ -133,6 +138,10 @@ TELEOP_KEYS = {
     "quit": "q",
 }
 
+# Terminal backend: a TTY reports key-down but never key-release, so a press only
+# keeps the wheels turning until this timeout expires without a new press.
+KEY_HOLD_TIMEOUT_S = 0.4
+
 
 class OmniTeleop:
     def __init__(self, port: str):
@@ -144,6 +153,8 @@ class OmniTeleop:
         self.bus = FeetechMotorsBus(port=port, motors=self.motors)
         self.running = True
         self.pressed = dict.fromkeys(TELEOP_KEYS, False)
+        self.terminal_mode = False
+        self._terminal_deadlines: dict[str, float] = {}
 
         self.lin_speed = float(LIN_SPEED)
         self.ang_speed = float(ANG_SPEED)
@@ -175,6 +186,34 @@ class OmniTeleop:
         for action, bind in TELEOP_KEYS.items():
             if ch == bind and action in self.pressed:
                 self.pressed[action] = False
+
+    # ---- Terminal backend (headless / SSH, no X display) ----
+    def _on_terminal_key(self, name: str) -> None:
+        """Handle one key-down from the terminal.
+
+        The controlling TTY cannot report key-release, so every press refreshes a
+        deadline and the main loop clears the action once it expires.
+        """
+        if name == "esc":
+            self.running = False
+            return
+        ch = name.lower()
+        for action, bind in TELEOP_KEYS.items():
+            if ch != bind:
+                continue
+            if action == "quit":
+                self.running = False
+                return
+            self.pressed[action] = True
+            self._terminal_deadlines[action] = time.monotonic() + KEY_HOLD_TIMEOUT_S
+
+    def _expire_terminal_keys(self) -> None:
+        """Clear terminal-driven actions whose deadline expired (no new key-down)."""
+        now = time.monotonic()
+        for action, deadline in list(self._terminal_deadlines.items()):
+            if now >= deadline:
+                self.pressed[action] = False
+                self._terminal_deadlines.pop(action, None)
 
     # ---- Connect and mode switch ----
     def connect(self) -> None:
@@ -209,10 +248,23 @@ class OmniTeleop:
 
     # ---- Main loop ----
     def run(self):
-        listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
-        listener.start()
+        if keyboard is not None and pynput_can_capture():
+            listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+            listener.start()
+            print("Keyboard: pynput global listener (hold a key to move).")
+        else:
+            listener = TerminalKeyListener(self._on_terminal_key)
+            listener.start()
+            self.terminal_mode = True
+            print(
+                "No display detected - using terminal keyboard input.\n"
+                f"  Tap a key to move; it stops after {KEY_HOLD_TIMEOUT_S:.1f}s without a new press.\n"
+                "  Keys: W/S forward/back, Z/X strafe, A/D rotate, Q or ESC quit."
+            )
         try:
             while self.running:
+                if self.terminal_mode:
+                    self._expire_terminal_keys()
                 x = (
                     self.lin_speed
                     if self.pressed.get("forward")
