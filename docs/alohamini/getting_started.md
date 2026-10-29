@@ -138,15 +138,12 @@ python examples/debug/motors.py configure_motor_id --id 1 --set_id 8 --port /dev
 **在 `<Pi>` 上执行**。
 
 ```bash
-# 1) Python 环境（二选一）
+# 1) Python 环境（本项目统一用 conda，不建 uv 的 .venv）
 conda create -y -n lerobot_alohamini python=3.12
 conda activate lerobot_alohamini
 pip install -e ".[all]"
 pip install pyzmq feetech-servo-sdk
 conda install -y ffmpeg=7.1.1 -c conda-forge
-
-# 或用 uv
-uv sync --locked --extra all
 
 # 2) 串口权限（必须重启才生效）
 sudo usermod -a -G dialout $USER
@@ -250,34 +247,110 @@ or type 'c' and press ENTER to run calibration:
 
 ---
 
-## 7. 阶段六 — 底盘与升降轴单独测试
+## 7. 阶段六 — 各硬件单独测试
 
-标定完成后，先单独验证底盘和升降轴，避免等整套跑起来再排查。
+标定完成后，先逐个验证底盘、升降轴、相机、从臂，避免等整套跑起来再排查。
+
+> ⚠️ **前置条件（所有调试脚本都适用）**：**Host 必须已停** —— 脚本与 Host 争用同一个串口
+> `/dev/am_arm_follower_left`。新脚本（`base_pulse.py` / `lift.py` / `arms.py` / `cameras.py`）
+> **不依赖键盘**，SSH 到无 X11 的树莓派上可以直接跑。
 
 ### 7.1 底盘
 
 **在 `<Pi>` 上执行**（电机接在树莓派上）：
 
 ```bash
+python examples/debug/base_pulse.py \
+  --port /dev/am_arm_follower_left \
+  --steps fwd:1,back:1,left:1,right:1,rotl:1,rotr:1
+```
+
+固定动作序列：每一步跑完自动停车，并打印三轮的 raw 速度与实测电流。
+电流超过 `--current-cutoff`（默认 1000 mA）立即停机并以退出码 1 结束。
+
+键盘版（需要 pynput 抓键盘，SSH 场景用上面的固定序列）：
+
+```bash
 python examples/debug/wheels.py --port /dev/am_arm_follower_left
 ```
 
-按键：`W/S` 前进后退 · `A/D` 旋转 · `Q/E` 横移 · `X/ESC` 退出。
+按键：`W/S` 前进后退 · `Z/X` 左右横移 · `A/D` 旋转 · `Q` 退出（`ESC` 也会触发退出）。
 
 **通过标准**：三个轮子都转，方向正确（前进应该是前进，不是后退），旋转方向正常。
 
 ### 7.2 升降轴
 
 ```bash
-python examples/debug/axis.py --port /dev/am_arm_follower_left
+python examples/debug/lift.py \
+  --port /dev/am_arm_follower_left \
+  --heights 0,80,200,80,10
 ```
 
-**通过标准**：轴平滑升降，到底/到顶时有保护（不会硬顶）。
+`lift.py` 先 homing（下行到底部硬限位 → 0 mm），再按 mm 目标闭环运动，逐步打印目标/实测高度、ticks、电流。
+不需要键盘，SSH 无 X11 也能跑。
 
-> ⚠️ **已知问题**：`axis.py` 里电机型号硬编码为 `sts3215`、归一化为 `RANGE_0_100`；而 **AlohaMini 2 / 2 Pro 的升降电机是 STS3095**，真实配置用的是 `DEGREES`。用该脚本测 2/2Pro 时响应会不对。底盘测试（`wheels.py`）不受影响。
-> 需要准确测量升降时，请走 §13 的评估流程而不是这个脚本。
+**通过标准**：
 
-### 7.3 组合模式（可选）
+- [ ] homing 后打印 `homing 后高度 = 0.0 mm`，且 `实际行程` 是个合理值（如果 < 1 mm，说明启动时升降台已经在底部，属正常）
+- [ ] 每个目标高度 5 s 内到位（`-> 已到位`），实测值与目标相差 ≤ 1 mm
+- [ ] 电流读数平稳，没有频繁触发 `--current-cutoff`（默认 1000 mA）
+
+> 低于下行地板（`--descent-floor`，默认 5 mm）的目标会被**直接跳过**并标成
+> `被下行保护拦截`，不会空跑一轮再误报「超时，未到位」。
+> homing 之后高度本来就是 0 mm，所以 `--heights 0,...` 的第一项被跳过是正常的。
+
+**参数按型号**：`alohamini1` 用 `sts3215` + 导程 84 mm/转（脚本默认值即匹配）；
+`alohamini2` / `2pro` 用 `sts3095` + 导程 131 mm/转，需加 `--model sts3095 --lead-mm-per-rev 131`。
+
+> ⚠️ 树莓派上的仓库代码要更新到最新（`LiftAxis.stop()` 是后加的，旧版本会在脚本结束时抛 `AttributeError`）：
+> ```bash
+> git -C ~/lerobot_alohamini pull
+> ```
+
+### 7.3 相机
+
+```bash
+# 测配置里的两台相机（head_front + head_top）
+python examples/debug/cameras.py
+
+# 只测一台，并把 10 帧存成 PNG
+python examples/debug/cameras.py --camera head_top \
+  --save-dir /tmp/cam_frames --frames 10
+```
+
+默认不开 GUI（树莓派通常是 headless），报告协商到的 fourcc、实测帧率、分辨率、曝光/增益，
+以及画面亮度统计（用来区分「正常画面」「全黑」「满屏噪点」）。
+
+**通过标准**：
+
+- [ ] 两台相机都能连上，`实测 FPS` 接近 30
+- [ ] `fourcc` 实际是 `MJPG` —— 如果是 `YUYV`，说明协商失败（库里只 warning 不报错），
+      YUYV 640x480@30 约 18 MB/s/台，多台会挤爆 USB 带宽
+- [ ] 画面统计 `mean` 在 20–200 之间、`std` 不超过 60；存下来的 PNG 用看图软件确认视角正确
+
+### 7.4 从臂
+
+**在 `<Pi>` 上执行**（右臂把 `--arm left` 换成 `--arm right`）：
+
+```bash
+# 只读：看关节角、限位、标定状态（完全不动机械臂）
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left
+
+# 单关节点动：肩关节抬 5 度
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left \
+  --mode jog --joint shoulder_pan --delta-deg 5
+```
+
+从臂 6 个关节的 ID 是 **1–6**（`shoulder_pan` … `gripper`），左臂挂左总线、右臂挂右总线。
+
+**通过标准**：
+
+- [ ] `read` 模式逐关节打印出 ticks / 角度 / EEPROM 限位 / 电流，没有「读取失败」
+- [ ] 标定 + 断电重启后，`Homing_Offset` 全部非 0（脚本会打印「已标定」）；
+      标定前或没断电重启时会打印「尚未标定」
+- [ ] `jog` 模式只动指定关节，目标被夹在 EEPROM 限位内，结束后自动回到起点
+
+### 7.5 组合模式（可选）
 
 只测底盘 + 升降、完全不接随动臂：
 
@@ -331,7 +404,7 @@ Waiting for commands...
 
 ### 9.1 PC 环境
 
-**在 `<PC>` 上执行**，与 §4 步骤相同（conda 或 uv 均可），**同样需要** `dialout` 权限和 `hf auth login`。
+**在 `<PC>` 上执行**，与 §4 步骤相同（统一用 conda env `lerobot_alohamini`），**同样需要** `dialout` 权限和 `hf auth login`。
 
 ### 9.2 主臂标定
 
@@ -637,7 +710,7 @@ python examples/alohamini/record_bi.py ... --profile-timing
 | 现象 | 处理 |
 |---|---|
 | 底盘方向反了 | 三全向轮安装朝向问题，交换电机相序或调整 `wheels.py` 常量 |
-| 升降轴响应不对 | `axis.py` 的电机型号硬编码 `sts3215`，**AlohaMini 2/2Pro 用的是 STS3095**，请走评估流程测量 |
+| 升降轴响应不对 | `lift.py` 的电机型号默认 `sts3215`，**AlohaMini 2/2Pro 用的是 STS3095**，请加 `--model sts3095 --lead-mm-per-rev 131` |
 | 升降轴顶死不动 | 下降地面保护（`descent_floor_mm`）生效，属正常保护行为 |
 
 ### 控制权 / 安全

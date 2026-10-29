@@ -38,6 +38,10 @@ pip install pyzmq feetech-servo-sdk
 conda install -y ffmpeg=7.1.1 -c conda-forge
 ```
 
+> This project uses the conda env `lerobot_alohamini` on both the PC and the
+> Raspberry Pi. Do not create a `uv`/`.venv` environment here — activate the
+> conda env and run every command with plain `python`.
+
 ## Serial port permissions
 
 One-time setup — add your user to the `dialout` group, then reboot:

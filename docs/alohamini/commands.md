@@ -31,6 +31,11 @@ uv sync --locked --extra test --extra dev
 uv sync --locked --extra all
 ```
 
+> **This project uses the conda env `lerobot_alohamini` on both the PC and the
+> Raspberry Pi.** The `uv` commands above are kept as a reference for other
+> setups only — do not create a `.venv` here, and run every command below with
+> plain `python` after `conda activate lerobot_alohamini`.
+
 Serial permissions:
 
 ```bash
@@ -385,10 +390,10 @@ lerobot-train \
   --dataset.video_backend=pyav
 ```
 
-Train with uv:
+Train:
 
 ```bash
-uv run lerobot-train \
+lerobot-train \
   --dataset.repo_id=$HF_USER/am2_bi_test \
   --policy.type=act \
   --output_dir=outputs/train/act_am2_bi_test \
@@ -482,6 +487,9 @@ python examples/alohamini/record_bi.py \
 
 These commands come from [examples/debug](../../examples/debug/). Run them from the repository root.
 
+**Stop the Host before running any of them** — the debug scripts and the Host fight over
+the same serial port (`/dev/am_arm_follower_left`).
+
 View all motor states:
 
 ```bash
@@ -489,19 +497,70 @@ python examples/debug/motors.py get_motors_states \
   --port /dev/ttyACM0
 ```
 
-Control the mobile base only:
+Control the mobile base only — fixed action sequence (no keyboard, runs over SSH):
+
+```bash
+python examples/debug/base_pulse.py \
+  --port /dev/am_arm_follower_left \
+  --steps fwd:1,back:1,left:1,right:1,rotl:1,rotr:1
+```
+
+`base_pulse.py` runs each action for the given number of seconds and stops the
+wheels afterwards, printing the raw speed and the measured current of each wheel.
+It trips an over-current cutoff (default 1000 mA) and exits with code 1.
+
+The keyboard-driven variant is still available:
 
 ```bash
 python examples/debug/wheels.py \
-  --port /dev/ttyACM0
+  --port /dev/am_arm_follower_left
 ```
 
-Control the lift axis only:
+Keys: `W/S` forward/back · `Z/X` strafe left/right · `A/D` rotate · `Q` quit.
+
+Control the lift axis only (the lift motor is ID 11 on the **left** bus):
 
 ```bash
-python examples/debug/axis.py \
-  --port /dev/ttyACM0
+python examples/debug/lift.py \
+  --port /dev/am_arm_follower_left \
+  --heights 0,80,200,80,10
 ```
+
+`lift.py` homes the axis first (down to the hard stop, then 0 mm) and then moves
+through the given millimetre targets, printing height and current at each step.
+It needs no keyboard, so it also runs over SSH on a headless machine.
+Targets below the descent floor (default 5 mm) are skipped and reported as
+"被下行保护拦截" instead of timing out.
+
+For `alohamini2` / `alohamini2pro` add `--model sts3095 --lead-mm-per-rev 131`.
+
+Read the follower-arm joints (IDs 1-6) without moving them:
+
+```bash
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left
+```
+
+This prints ticks, degrees, the EEPROM position limits and the measured current per
+joint, and warns when every `Homing_Offset` is still 0 — i.e. the arm has not been
+calibrated (or the arms were not power-cycled after calibration).
+
+Jog a single joint:
+
+```bash
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left \
+  --mode jog --joint shoulder_pan --delta-deg 5
+```
+
+Test the cameras:
+
+```bash
+python examples/debug/cameras.py
+python examples/debug/cameras.py --camera head_top --save-dir /tmp/cam_frames --frames 10
+```
+
+The script reports the negotiated fourcc (a failed MJPG negotiation only warns inside
+the library, so it is re-read explicitly), the measured frame rate, the resolution and
+the exposure/gain. It opens no GUI by default; add `--show` for a preview window.
 
 Rotate a specific motor by ID:
 
@@ -556,7 +615,7 @@ Execute an action script on the robot arm:
 
 ```bash
 python examples/debug/motors.py move_motors_by_script \
-  --script_path examples/debug/action_scripts/test_dance.txt \
+  --script_path action_scripts/test_dance.txt \
   --port /dev/ttyACM0
 ```
 
@@ -564,7 +623,7 @@ Move arm to rest position from script:
 
 ```bash
 python examples/debug/motors.py move_motors_by_script \
-  --script_path examples/debug/action_scripts/go_to_restposition.txt \
+  --script_path action_scripts/go_to_restposition.txt \
   --port /dev/ttyACM0
 ```
 
@@ -572,9 +631,18 @@ Move arm to midpoint from script:
 
 ```bash
 python examples/debug/motors.py move_motors_by_script \
-  --script_path examples/debug/action_scripts/go_to_midpoint.txt \
+  --script_path action_scripts/go_to_midpoint.txt \
   --port /dev/ttyACM0
 ```
+
+> ⚠️ `--script_path` is resolved **relative to `examples/debug/`**, so write
+> `action_scripts/test_dance.txt` — not `examples/debug/action_scripts/test_dance.txt`,
+> which would become `examples/debug/examples/debug/...` and fail with `FileNotFoundError`.
+>
+> ⚠️ `move_motors_by_script` currently registers **only** the `gripper` motor; every other
+> joint line in the script files is silently skipped. On the AlohaMini the `gripper` it
+> registers is **ID 8, which is the left base wheel** (the arm gripper is ID 6) — do not run
+> this on the left bus until that is fixed. Use `arms.py` for the follower arm instead.
 
 Run camera debug script:
 
@@ -617,7 +685,7 @@ python examples/debug/test_mic.py
 Run tests:
 
 ```bash
-uv run pytest tests -svv --maxfail=10
+pytest tests -svv --maxfail=10
 ```
 
 Run pre-commit checks:

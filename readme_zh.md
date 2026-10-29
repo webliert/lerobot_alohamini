@@ -130,16 +130,30 @@ LeRobot 本身是一个研究导向的算法库：数据集、策略、训练、
 
 ## 4. 安装
 
-### 4.1 通用（uv，推荐）
+### 4.1 本项目统一用 conda env `lerobot_alohamini`
+
+> **PC 与树莓派都用 conda env `lerobot_alohamini`，不再用 `uv` 建 `.venv`。**
+> 所有命令在 `conda activate lerobot_alohamini` 之后直接用 `python` 执行。
 
 ```bash
 git clone https://github.com/liyiteng/lerobot_alohamini.git
 cd lerobot_alohamini
 
+conda create -y -n lerobot_alohamini python=3.12
+conda activate lerobot_alohamini
+pip install -e ".[all]"
+```
+
+<details>
+<summary>备选：uv（其它项目用，本项目不采用）</summary>
+
+```bash
 uv sync --locked                            # 基础依赖
 uv sync --locked --extra test --extra dev   # 测试 + 开发工具
 uv sync --locked --extra all                # 全部
 ```
+
+</details>
 
 ### 4.2 conda（树莓派 / x86 PC）
 
@@ -712,15 +726,34 @@ python -m alohamini_sim.data_engine.lerobot_bridge \
 
 [examples/debug/](examples/debug/) 是面向 Feetech 串口总线的低层排查工具集。
 
+> ⚠️ **跑之前先停掉 Host** —— 调试脚本与 Host 争用同一个串口 `/dev/am_arm_follower_left`。
+> 下面 4 个新脚本（`base_pulse.py` / `lift.py` / `arms.py` / `cameras.py`）**不依赖键盘**，
+> SSH 到无 X11 的树莓派上可以直接跑。
+
 ```bash
 # 查看全部电机状态
 python examples/debug/motors.py get_motors_states --port /dev/ttyACM0
 
-# 只驱动移动底盘
-python examples/debug/wheels.py --port /dev/ttyACM0
+# 底盘：固定动作序列（前进/后退/横移/旋转各 1 s，每步自动停车）
+python examples/debug/base_pulse.py --port /dev/am_arm_follower_left \
+  --steps fwd:1,back:1,left:1,right:1,rotl:1,rotr:1
 
-# 只驱动升降轴
-python examples/debug/axis.py --port /dev/ttyACM0
+# 底盘：键盘遥操作（W/S 前后 · Z/X 横移 · A/D 旋转 · Q 退出）
+python examples/debug/wheels.py --port /dev/am_arm_follower_left
+
+# 升降轴：先 homing，再按 mm 目标闭环
+python examples/debug/lift.py --port /dev/am_arm_follower_left --heights 0,80,200,80,10
+
+# 从臂：只读，看关节角 / EEPROM 限位 / 标定状态
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left
+
+# 从臂：单关节点动（--joint + --delta-deg）
+python examples/debug/arms.py --port /dev/am_arm_follower_left --arm left \
+  --mode jog --joint shoulder_pan --delta-deg 5
+
+# 相机：fourcc / 帧率 / 曝光，并存几帧 PNG
+python examples/debug/cameras.py
+python examples/debug/cameras.py --camera head_top --save-dir /tmp/cam_frames --frames 10
 
 # 指定 ID 转动 / 改 ID / 设相位 / 回中点 / 关扭矩
 python examples/debug/motors.py move_motor_to_position --id 1 --position 2 --port /dev/ttyACM0
@@ -730,10 +763,17 @@ python examples/debug/motors.py reset_motors_to_midpoint --port /dev/ttyACM1
 python examples/debug/motors.py reset_motors_torque      --port /dev/ttyACM0
 
 # 执行动作脚本
-python examples/debug/motors.py move_motors_by_script --script_path examples/debug/action_scripts/test_dance.txt --port /dev/ttyACM0
+python examples/debug/motors.py move_motors_by_script --script_path action_scripts/test_dance.txt --port /dev/ttyACM0
 ```
 
-`motors.py`（767 行）支持脚本中的 `{Present_Position}` 占位符表达式。`wheels.py`（283 行）是三全向轮键盘遥操作（`Goal_Speed` 原始 16 位写入）。`axis.py`（138 行）是带过流保护的升降轴演示（1000 mA 切断）。
+`motors.py`（767 行）支持脚本中的 `{Present_Position}` 占位符表达式。`wheels.py`（283 行）是三全向轮键盘遥操作（`Goal_Speed` 原始 16 位写入）。
+
+新脚本族（`base_pulse.py` / `lift.py` / `arms.py` / `cameras.py`）共用 `_common.py` 的总线生命周期与过流保护（默认 1000 mA 触发即停），退出码统一为 `0` = 通过 / `1` = 过流或异常 / `2` = 参数错误。
+
+> ⚠️ `move_motors_by_script` 当前**只注册了 `gripper`**，其余关节行被静默跳过；
+> 而且它注册的 `gripper` 是 **ID 8 —— 在 AlohaMini 上那是底盘左轮**（臂的夹爪是 ID 6）。
+> 在左总线上跑这个脚本会往底盘左轮下发 `Goal_Position`，用之前先确认总线拓扑。
+> `--script_path` 是相对 `examples/debug/` 解析的，所以写 `action_scripts/test_dance.txt`。
 
 其他：`test_cv.py`（OpenCV + 相机）、`test_cuda.py`（GPU 冒烟）、`test_network.py`（连通性）、`test_dataset.py`（读 parquet）、`test_input.py`（无头/Wayland 键盘诊断）、`test_mic.py`（音频设备）。
 
